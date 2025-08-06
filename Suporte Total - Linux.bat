@@ -1,77 +1,227 @@
 #!/bin/bash
 
-# ============================================================
-# Script de Manutenção para Sistemas Linux (Debian/Ubuntu)
-# Atualizações, limpeza, integridade e rede
+# ===================================================================
+# Arquivo: manutencao_linux_interativa.sh
+# Descrição: Script interativo de manutenção para sistemas Linux (Debian/Ubuntu)
 # Criador: https://github.com/MBritoS19
-# ============================================================
+# ===================================================================
 
-# 1) Verificação de privilégios
-if [[ $EUID -ne 0 ]]; then
-   echo "[!] Este script precisa ser executado como root (sudo)."
-   exit 1
-fi
+# -------------------------------------------------------------------
+# Funções de Verificação de Privilégios
+# -------------------------------------------------------------------
+check_root() {
+    if [[ $EUID -ne 0 ]]; then
+        echo "[!] Esta acao requer privilegios de root (sudo). Execute o script com 'sudo'."
+        read -n 1 -s -r -p "Pressione qualquer tecla para voltar ao menu."
+        return 1
+    fi
+    return 0
+}
 
-echo
-echo "==============================================="
-echo " INICIANDO MANUTENÇÃO DO SISTEMA LINUX"
-echo "==============================================="
+# -------------------------------------------------------------------
+# Funções de Manutenção
+# -------------------------------------------------------------------
 
-# 2) Atualizar pacotes do sistema
-echo "[1/10] Atualizando pacotes do sistema..."
-apt update -y && apt upgrade -y && apt dist-upgrade -y
+update_packages() {
+    check_root || return
+    echo "[1] Atualizando pacotes do sistema..."
+    apt update -y
+    if [ $? -ne 0 ]; then
+        echo "[!] Erro ao atualizar a lista de pacotes."
+        return
+    fi
+    apt upgrade -y
+    if [ $? -ne 0 ]; then
+        echo "[!] Erro ao atualizar pacotes."
+        return
+    fi
+    apt dist-upgrade -y
+    if [ $? -ne 0 ]; then
+        echo "[!] Erro ao fazer dist-upgrade."
+        return
+    fi
+    echo "[✓] Pacotes do sistema atualizados com sucesso."
+}
 
-# 3) Remover pacotes e kernels antigos
-echo "[2/10] Removendo pacotes desnecessários..."
-apt autoremove -y
-apt autoclean -y
-apt clean -y
+remove_packages() {
+    check_root || return
+    echo "[2] Removendo pacotes desnecessários..."
+    apt autoremove -y
+    if [ $? -ne 0 ]; then
+        echo "[!] Erro ao remover pacotes órfãos."
+        return
+    fi
+    apt autoclean -y
+    if [ $? -ne 0 ]; then
+        echo "[!] Erro ao limpar cache de pacotes baixados."
+        return
+    fi
+    apt clean -y
+    if [ $? -ne 0 ]; then
+        echo "[!] Erro ao limpar cache de pacotes."
+        return
+    fi
+    echo "[✓] Pacotes desnecessários e cache removidos."
+}
 
-# 4) Verificação de pacotes quebrados
-echo "[3/10] Verificando e corrigindo pacotes quebrados..."
-dpkg --configure -a
-apt install -f -y
+fix_broken_packages() {
+    check_root || return
+    echo "[3] Verificando e corrigindo pacotes quebrados..."
+    dpkg --configure -a
+    apt install -f -y
+    if [ $? -ne 0 ]; then
+        echo "[!] Erro ao corrigir pacotes quebrados."
+    else
+        echo "[✓] Pacotes quebrados verificados e corrigidos."
+    fi
+}
 
-# 5) Verificação de integridade do sistema de arquivos raiz
-echo "[4/10] Verificando integridade do sistema de arquivos..."
-touch /forcefsck
-echo "→ A verificação ocorrerá na próxima reinicialização."
+check_filesystem() {
+    check_root || return
+    echo "[4] Verificando integridade do sistema de arquivos..."
+    echo
+    echo "ATENCAO: A verificacao do sistema de arquivos (fsck) será agendada para a próxima reinicialização."
+    echo "Ela pode levar um tempo consideravel dependendo do tamanho e do estado do disco."
+    echo
+    touch /forcefsck
+    if [ $? -ne 0 ]; then
+        echo "[!] Erro ao agendar a verificacao de sistema de arquivos."
+    else
+        echo "[✓] Verificacao de sistema de arquivos agendada com sucesso."
+    fi
+}
 
-# 6) Verificação de integridade de arquivos críticos
-echo "[5/10] Verificando integridade de arquivos do sistema..."
-debsums -s 2>/dev/null || echo "→ 'debsums' não instalado, execute: apt install debsums"
+check_file_integrity() {
+    echo "[5] Verificando integridade de arquivos do sistema..."
+    if ! command -v debsums &> /dev/null; then
+        echo "→ 'debsums' não está instalado."
+        echo "→ Para instalá-lo, execute: sudo apt install debsums"
+    else
+        debsums -s
+        if [ $? -ne 0 ]; then
+            echo "[!] Foram encontradas inconsistencias nos arquivos. Verifique a saida acima."
+        else
+            echo "[✓] Nenhuma inconsistencia encontrada."
+        fi
+    fi
+}
 
-# 7) Verificar espaço em disco
-echo "[6/10] Uso de espaço em disco:"
-df -h
+check_disk_space() {
+    echo "[6] Uso de espaço em disco:"
+    df -h
+}
 
-# 8) Verificar serviços em falha
-echo "[7/10] Verificando serviços com falha:"
-systemctl --failed
+check_failed_services() {
+    echo "[7] Verificando serviços com falha:"
+    systemctl --failed
+    if [ $? -ne 0 ]; then
+        echo "[✓] Nenhum serviço com falha encontrado."
+    fi
+}
 
-# 9) Limpar cache do Snap (se houver)
-if command -v snap >/dev/null 2>&1; then
-    echo "[8/10] Limpando cache de snaps antigos..."
-    snap list --all | awk '/disabled/{print $1, $2}' |
-    while read snapname version; do
-        snap remove "$snapname" --revision="$version"
-    done
-else
-    echo "[8/10] Snap não instalado – ignorado."
-fi
+clean_snap_cache() {
+    if command -v snap &> /dev/null; then
+        echo "[8] Limpando cache de snaps antigos..."
+        snap list --all | awk '/disabled/{print $1, $2}' | while read snapname version; do
+            snap remove "$snapname" --revision="$version"
+        done
+        echo "[✓] Cache de snaps antigos limpo."
+    else
+        echo "[8] Snap não instalado – ignorado."
+    fi
+}
 
-# 10) Limpeza de arquivos temporários
-echo "[9/10] Limpando arquivos temporários..."
-rm -rf /tmp/*
-rm -rf /var/tmp/*
-journalctl --vacuum-time=7d
+clean_temp_files() {
+    check_root || return
+    echo "[9] Limpando arquivos temporários..."
+    rm -rf /tmp/*
+    if [ $? -ne 0 ]; then
+        echo "[!] Erro ao limpar /tmp."
+    fi
+    rm -rf /var/tmp/*
+    if [ $? -ne 0 ]; then
+        echo "[!] Erro ao limpar /var/tmp."
+    fi
+    journalctl --vacuum-time=7d
+    if [ $? -ne 0 ]; then
+        echo "[!] Erro ao limpar o journal."
+    else
+        echo "[✓] Arquivos temporários e logs antigos do journal limpos."
+    fi
+}
 
-# 11) Reinicialização opcional da rede e DNS
-echo "[10/10] Reinicializando rede e limpando DNS..."
-systemctl restart NetworkManager
-systemd-resolve --flush-caches
+reset_network() {
+    check_root || return
+    echo "[10] Reinicializando rede e limpando DNS..."
+    systemctl restart NetworkManager
+    if [ $? -ne 0 ]; then
+        echo "[!] Erro ao reiniciar o NetworkManager."
+    else
+        echo "[✓] NetworkManager reinicializado."
+    fi
+    systemd-resolve --flush-caches
+    if [ $? -ne 0 ]; then
+        echo "[!] Erro ao limpar o cache do DNS."
+    else
+        echo "[✓] Cache do DNS limpo."
+    fi
+}
 
-echo
-echo "==============================================="
-echo " ROTINA DE MANUTENÇÃO FINALIZADA!"
-echo "==============================================="
+run_all() {
+    update_packages
+    remove_packages
+    fix_broken_packages
+    check_filesystem
+    check_file_integrity
+    check_disk_space
+    check_failed_services
+    clean_snap_cache
+    clean_temp_files
+    reset_network
+}
+
+# -------------------------------------------------------------------
+# Menu Principal
+# -------------------------------------------------------------------
+while true; do
+    clear
+    echo "==============================================="
+    echo "   MENU DE MANUTENCAO DO SISTEMA LINUX"
+    echo "==============================================="
+    echo
+    echo "Escolha uma opcao:"
+    echo
+    echo "[1]  - Atualizar pacotes do sistema"
+    echo "[2]  - Remover pacotes e kernels antigos"
+    echo "[3]  - Corrigir pacotes quebrados"
+    echo "[4]  - Agendar verificacao de disco (fsck)"
+    echo "[5]  - Verificar integridade de arquivos do sistema"
+    echo "[6]  - Verificar espaco em disco"
+    echo "[7]  - Verificar servicos com falha"
+    echo "[8]  - Limpar cache do Snap"
+    echo "[9]  - Limpar arquivos temporarios"
+    echo "[10] - Reinicializar rede e limpar DNS"
+    echo "[11] - Executar todas as rotinas de manutencao"
+    echo "[0]  - Sair"
+    echo
+    read -p "Digite sua escolha: " choice
+
+    case "$choice" in
+        1) update_packages ;;
+        2) remove_packages ;;
+        3) fix_broken_packages ;;
+        4) check_filesystem ;;
+        5) check_file_integrity ;;
+        6) check_disk_space ;;
+        7) check_failed_services ;;
+        8) clean_snap_cache ;;
+        9) clean_temp_files ;;
+        10) reset_network ;;
+        11) run_all ;;
+        0) echo "Saindo..." ; exit 0 ;;
+        *) echo "Opcao invalida." ;;
+    esac
+
+    echo
+    read -n 1 -s -r -p "Pressione qualquer tecla para voltar ao menu..."
+done
